@@ -55,6 +55,11 @@ Benchmark e pipeline de extração de PDFs técnicos para RAG, comparando:
 - Windows 10/11 (testado em 10 Pro 19045)
 - ~5 GB livres em disco (~500 MB Rust + ~3 GB MinerU)
 - GPU NVIDIA com 8 GB+ VRAM **opcional** (acelera MinerU 60×+)
+- **Windows Developer Mode habilitado** (obrigatório se for usar `-b vlm-auto-engine` ou qualquer backend VLM). O `huggingface_hub` baixa modelos via symlinks; sem Developer Mode, falha com `WinError 1314 — o cliente não tem o privilégio necessário`. Habilitar em Settings → Privacy & security → For developers, ou via PowerShell admin:
+  ```powershell
+  New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force
+  ```
+  Backend `pipeline` não precisa disso.
 
 ### Instalação
 
@@ -126,10 +131,35 @@ Backends:
 - `hybrid-auto-engine` — combina ambos
 
 Flags úteis:
-- `-l en` — idioma (default `ch`)
+- `-l en` / `-l latin` — idioma (default `ch`). Para PT-BR use `latin`. Ver seção [Processando PDFs em português](#processando-pdfs-em-português-pt-br).
 - `-s N -e M` — intervalo de páginas
 - `-f true` — parsing de fórmulas → LaTeX
 - `-t true` — parsing de tabelas (default on)
+
+### Processando PDFs em português (PT-BR)
+
+A flag `-l/--lang` mapeia para os pacotes de OCR do PaddleOCR. **Não existe código `pt`/`pt_br`** — para português brasileiro use **`-l latin`** (cobre alfabetos latinos: PT/ES/FR/IT/etc.).
+
+Códigos aceitos pelo backend `pipeline` (fonte: [doc oficial](https://opendatalab.github.io/MinerU/usage/cli_tools/)):
+`ch, ch_server, ch_lite, en, korean, japan, chinese_cht, ta, te, ka, th, el, latin, arabic, east_slavic, cyrillic, devanagari`
+
+```bash
+# PDF text-based digital (caso comum)
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin
+
+# Forçar OCR (texto digital ruim, fontes embedded estranhas)
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin -m ocr
+
+# Qualidade máxima via VLM multilíngue (precisa VRAM)
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b vlm-auto-engine
+```
+
+Notas (verificadas empiricamente em PDF PT-BR de 156 páginas, `text_based`):
+- `-l` **só importa quando há OCR**. PDFs `text_based` extraem texto direto e a flag é praticamente ignorada.
+- **Pipeline `-l latin` produziu acentos PT-BR perfeitos** (13.661 caracteres acentuados, zero U+FFFD): "reprodução", "autorização", "citações", "Enéias", "Comissão Teológica" — todos limpos. Em ~7 s.
+- **VLM `vlm-auto-engine` produziu qualidade equivalente** (13.688 acentos, zero U+FFFD), mas levou **~5 minutos** (~40× mais lento). Estrutura marginalmente melhor (mais headings detectados), volume de texto quase idêntico (209 KB vs 212 KB).
+- **Conclusão para PT-BR digital: use `pipeline -l latin`** — VLM não compensa o custo. VLM só faz diferença real em PDFs escaneados/imagem onde o pacote `latin` do PaddleOCR poderia falhar.
+- VLM no Windows precisa de **Developer Mode habilitado** (ver [Pré-requisitos](#pré-requisitos)) — sem isso, o download do modelo HF quebra com `WinError 1314`.
 
 ### Saída do MinerU
 
@@ -177,6 +207,7 @@ PDF chega
 ```
 fire_pdf/
 ├── README.md                    # este arquivo
+├── CLAUDE.md                    # contexto p/ Claude Code (comandos, PT-BR, ambiente)
 ├── .gitignore
 └── (NÃO COMITADOS — gerados localmente)
     ├── pdf-inspector/           # clone do repo upstream

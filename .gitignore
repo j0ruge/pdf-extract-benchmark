@@ -4,6 +4,7 @@
 # Saídas extraídas (contêm conteúdo protegido)
 out_*.md
 mineru_out/
+mineru_out_vlm/
 
 # Clone do pdf-inspector (repo separado)
 pdf-inspector/

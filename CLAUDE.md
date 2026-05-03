@@ -1,0 +1,100 @@
+# CLAUDE.md — pdf-extract-benchmark
+
+Contexto para sessões do Claude Code neste repositório.
+
+## O que é este repo
+
+Benchmark setup-only (sem código próprio) comparando duas ferramentas de extração de PDF para ingest RAG:
+
+- **pdf-inspector** (Rust, Firecrawl) — rápido, heurístico, ~1 s para 944 páginas
+- **MinerU** (ML, OpenDataLab) — pipeline com layout-model + OCR, ~63 s para o mesmo PDF em GPU
+
+**Veredito:** MinerU vence para extração final RAG (preserva código com fences, tabelas HTML, imagens, JSON estruturado). pdf-inspector serve como classificador rápido (`detect-pdf`) no caminho quente para decidir roteamento. Detalhes de números e qualidade no `README.md`.
+
+## Ambiente
+
+- Windows 10 Pro 19045, PowerShell (preferir; Bash via tool também funciona)
+- GPU NVIDIA RTX 3060 Ti 8 GB (acelera MinerU ~60×)
+- Python 3.12 isolado em `.venv-mineru/` (uv)
+- Toolchain Rust para compilar `pdf-inspector/` (clone externo)
+- **Windows Developer Mode = ON** (pré-requisito p/ qualquer backend VLM). Sem isso, `huggingface_hub` quebra ao baixar modelos com `WinError 1314` porque tenta criar symlinks. Foi habilitado neste setup via:
+  ```powershell
+  # PowerShell admin, executado uma vez
+  New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force
+  ```
+  O Claude Code roda sem privilégio admin neste ambiente — não tente alterar HKLM via shell normal, vai falhar com "Requested registry access is not allowed". Se uma sessão futura precisar desligar/religar, peça pro usuário fazer.
+
+## Comandos canônicos
+
+```powershell
+# pdf-inspector — classificação rápida
+./pdf-inspector/target/release/detect-pdf.exe arquivo.pdf --analyze --json
+
+# pdf-inspector — markdown rápido
+./pdf-inspector/target/release/pdf2md.exe arquivo.pdf --raw > saida.md
+
+# MinerU — extração ML completa
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l en
+```
+
+## Processando PDFs em português (PT-BR)
+
+A flag `-l/--lang` do MinerU mapeia para os pacotes de OCR do PaddleOCR. **Não existe código `pt` ou `pt_br`.** Para português brasileiro use **`-l latin`** (cobre todos os alfabetos latinos: PT/ES/FR/IT/etc.).
+
+Códigos aceitos pelo backend `pipeline`:
+`ch, ch_server, ch_lite, en, korean, japan, chinese_cht, ta, te, ka, th, el, latin, arabic, east_slavic, cyrillic, devanagari`
+
+Notas importantes (verificadas empiricamente em PDF PT-BR de 156 páginas, `text_based`):
+- `-l` **só afeta OCR**. PDFs `text_based` extraem texto direto e a flag é praticamente ignorada.
+- **`pipeline -l latin` produziu acentos PT-BR perfeitos**: 13.661 chars acentuados, **zero `U+FFFD`**. "reprodução", "autorização", "Enéias", "Comissão Teológica" — todos limpos. ~7 s no GPU.
+- **`vlm-auto-engine` produziu qualidade equivalente** (13.688 acentos, zero quebrados), mas em **~5 min** (~40× mais lento). Volume e cobertura de texto quase idênticos (209 KB pipeline vs 212 KB VLM).
+- **Recomendação para PT-BR digital: pipeline `-l latin`.** VLM só vale a pena para PDFs escaneados/imagem onde o pacote `latin` do PaddleOCR poderia falhar — não testado neste setup.
+- ⚠️ **Cuidado ao diagnosticar acentos via console**: o Git Bash no Windows renderiza UTF-8 PT-BR como `�` em alguns prints, mesmo quando os bytes do arquivo estão corretos. Sempre verifique com `grep -c $'\xef\xbf\xbd'` ou Python (`txt.count(chr(0xFFFD))`) antes de acusar a ferramenta. Aprendi errado uma vez nesta sessão.
+- Para usar VLM, **Windows Developer Mode é obrigatório** (ver "Ambiente"). Sem isso, download do modelo `MinerU2.5-Pro-2604-1.2B` quebra com `WinError 1314`.
+
+```powershell
+# Recomendado para PT-BR digital ou misto
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin
+
+# Forçar OCR (texto ruim, fontes embedded estranhas)
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin -m ocr
+
+# Qualidade máxima via VLM (precisa VRAM)
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b vlm-auto-engine
+```
+
+## Backends do MinerU (default mudou)
+
+- `pipeline` — layout-model + PaddleOCR. Rápido em GPU, bom default.
+- `hybrid-auto-engine` — **default atual**. Combina pipeline + VLM.
+- `hybrid-http-client`, `vlm-http-client` — chamam serviço remoto.
+- `vlm-auto-engine` — VLM local, qualidade máxima, alto consumo de VRAM.
+
+## Saída do MinerU
+
+```
+mineru_out/<pdfname>/auto/
+├── <pdfname>.md                  # Markdown final
+├── <pdfname>_content_list.json   # USE PARA CHUNKING RAG (blocos tipados)
+├── <pdfname>_middle.json         # Representação intermediária
+├── <pdfname>_layout.pdf          # Auditoria visual (bounding boxes)
+├── <pdfname>_span.pdf            # Spans de texto
+└── images/*.jpg                  # Figuras extraídas
+```
+
+`_content_list.json` é o artefato de produção — cada bloco tem tipo (`text`, `table`, `image`, `equation`), página, e bbox.
+
+## Arquivos não versionados
+
+`.gitignore` exclui — não tentar commitar:
+- `pdf-inspector/` (clone do upstream)
+- `.venv-mineru/` (~3 GB)
+- `mineru_out/` (contém conteúdo extraído de PDFs com copyright)
+- `*.pdf` (PDFs de teste com copyright)
+- saídas `out_*.md`
+
+## Fontes oficiais
+
+- Doc MinerU: https://opendatalab.github.io/MinerU/
+- CLI completo: https://opendatalab.github.io/MinerU/usage/cli_tools/
+- Parâmetros avançados: https://opendatalab.github.io/MinerU/usage/advanced_cli_parameters/

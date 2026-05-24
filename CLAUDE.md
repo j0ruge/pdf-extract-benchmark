@@ -4,19 +4,15 @@ Contexto para sessões do Claude Code neste repositório.
 
 ## O que é este repo
 
-Benchmark setup-only (sem código próprio) comparando duas ferramentas de extração de PDF para ingest RAG:
+Setup do **MinerU** (OpenDataLab, ML, Apache-2.0) para extração de PDFs → Markdown estruturado pra ingest RAG. Sem código próprio — só wrapper Python, docs e benchmarks empíricos.
 
-- **pdf-inspector** (Rust, Firecrawl) — rápido, heurístico, ~1 s para 944 páginas
-- **MinerU** (ML, OpenDataLab) — pipeline com layout-model + OCR, ~63 s para o mesmo PDF em GPU
-
-**Veredito:** MinerU vence para extração final RAG (preserva código com fences, tabelas HTML, imagens, JSON estruturado). pdf-inspector serve como classificador rápido (`detect-pdf`) no caminho quente para decidir roteamento. Detalhes de números e qualidade no `README.md`.
+O repo nasceu como benchmark comparando MinerU vs `pdf-inspector` (Firecrawl/Rust). **MinerU venceu** (preserva código com fences, tabelas HTML, imagens, JSON estruturado pronto pra chunking) e virou o caminho único — comparação completa e números em [`BENCHMARK.md`](BENCHMARK.md).
 
 ## Ambiente
 
 - Windows 10 Pro 19045, PowerShell (preferir; Bash via tool também funciona)
 - GPU NVIDIA RTX 3060 Ti 8 GB (acelera MinerU ~60×)
 - Python 3.12 isolado em `.venv-mineru/` (uv)
-- Toolchain Rust para compilar `pdf-inspector/` (clone externo)
 - **Windows Developer Mode = ON** (pré-requisito p/ qualquer backend VLM). Sem isso, `huggingface_hub` quebra ao baixar modelos com `WinError 1314` porque tenta criar symlinks. Foi habilitado neste setup via:
   ```powershell
   # PowerShell admin, executado uma vez
@@ -27,13 +23,13 @@ Benchmark setup-only (sem código próprio) comparando duas ferramentas de extra
 ## Comandos canônicos
 
 ```powershell
-# pdf-inspector — classificação rápida
-./pdf-inspector/target/release/detect-pdf.exe arquivo.pdf --analyze --json
+# Entry point preferencial — wrapper Python cross-platform com bootstrap automático
+python mineru-md.py arquivo.pdf
 
-# pdf-inspector — markdown rápido
-./pdf-inspector/target/release/pdf2md.exe arquivo.pdf --raw > saida.md
+# Mesma coisa, especificando lang/backend
+python mineru-md.py arquivo.pdf --lang latin --backend pipeline
 
-# MinerU — extração ML completa
+# MinerU CLI direto — pra debugging ou flags que o wrapper não expõe
 ./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l en
 ```
 
@@ -87,11 +83,10 @@ mineru_out/<pdfname>/auto/
 ## Arquivos não versionados
 
 `.gitignore` exclui — não tentar commitar:
-- `pdf-inspector/` (clone do upstream)
 - `.venv-mineru/` (~3 GB)
-- `mineru_out/` (contém conteúdo extraído de PDFs com copyright)
+- `mineru_out/`, `mineru_out_v2/`, etc. (conteúdo extraído de PDFs com copyright)
 - `*.pdf` (PDFs de teste com copyright)
-- saídas `out_*.md`
+- saídas `out_*.md`, `mineru_*_run.log`
 
 ## Fontes oficiais
 

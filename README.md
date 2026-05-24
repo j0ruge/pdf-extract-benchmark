@@ -1,50 +1,8 @@
-# fire_pdf
+# pdf-extract-benchmark
 
-Benchmark e pipeline de extração de PDFs técnicos para RAG, comparando:
+Setup e uso do **[MinerU](https://github.com/opendatalab/MinerU)** para extração de PDFs → Markdown estruturado, com foco em ingest RAG (livros técnicos, manuais de equipamento, documentos em PT-BR).
 
-1. **[pdf-inspector](https://github.com/firecrawl/pdf-inspector)** — biblioteca Rust da Firecrawl (rápida, heurística, sem ML)
-2. **[MinerU](https://github.com/opendatalab/MinerU)** — pipeline ML com detecção de layout e OCR (Apache-2.0)
-
-> Cenário alvo: ingest de livros técnicos e manuais de equipamento (VDR, ECDIS, AIS) em base RAG, com preservação de blocos de código, tabelas e reading order multicoluna.
-
----
-
-## Veredito
-
-- **Para ingest final em RAG → MinerU.** Preserva código em fences, tabelas HTML com rowspan/colspan, extrai imagens, e emite JSON estruturado (`_content_list.json`) pronto para chunking.
-- **Para classificação rápida no caminho quente → pdf-inspector.** Classifica tipo de PDF e decide roteamento OCR em milissegundos.
-- **Pipeline recomendado:** `detect-pdf` (~20ms) decide se vale extração ML; PDFs `text_based` simples vão pro `pdf2md`, PDFs complexos ou com código vão pro MinerU.
-
----
-
-## Resultados do benchmark
-
-### PDF de teste
-`Agile Principles, Patterns, and Practices in C#` (Martin & Martin, 2006) — **944 páginas, 13 MB, `text_based`**, com código C# extenso, diálogos em 2 colunas, tabelas financeiras e listings de classes.
-
-### Números
-
-| Métrica | pdf-inspector (CPU) | MinerU (GPU RTX 3060 Ti 8GB) |
-|---|---|---|
-| Tempo total | **1.0 s** | 63 s |
-| Tamanho markdown | 1.17 MB | 1.15 MB |
-| Linhas | 12.859 | 20.633 |
-| Headings detectados | 1.166 | 940 |
-| Blocos de código (` ``` `) | **0** | **340** (`cs`) |
-| Tabelas | 416 linhas MD (muitas falsas) | 14 `<table>` HTML estruturadas |
-| Imagens extraídas | 0 | ~340 `.jpg` |
-| Fórmulas LaTeX | não | sim (`-f` flag) |
-
-### Qualidade por critério
-
-| Critério | pdf-inspector | MinerU |
-|---|---|---|
-| Prosa | limpa | limpa |
-| Código C# | colapsado em 1 linha, sem fences | preservado com quebras e fences `cs` |
-| Frontmatter | palavras duplicadas (capa/TOC) | limpo |
-| Cap. 6 (diálogo RCM/RSK) | fatiado em tabelas quebradas | diálogo em prosa |
-| Tabelas financeiras | heurística erra | HTML com merged cells |
-| Reading order multicoluna | ok na maioria | ok |
+> Este repo nasceu como benchmark entre `pdf-inspector` e MinerU. MinerU venceu e virou o único caminho ativo — comparação completa, números e decisão em [BENCHMARK.md](BENCHMARK.md).
 
 ---
 
@@ -52,49 +10,40 @@ Benchmark e pipeline de extração de PDFs técnicos para RAG, comparando:
 
 ### Pré-requisitos
 
-- Windows 10/11 (testado em 10 Pro 19045)
-- ~5 GB livres em disco (~500 MB Rust + ~3 GB MinerU)
-- GPU NVIDIA com 8 GB+ VRAM **opcional** (acelera MinerU 60×+)
-- **Windows Developer Mode habilitado** (obrigatório se for usar `-b vlm-auto-engine` ou qualquer backend VLM). O `huggingface_hub` baixa modelos via symlinks; sem Developer Mode, falha com `WinError 1314 — o cliente não tem o privilégio necessário`. Habilitar em Settings → Privacy & security → For developers, ou via PowerShell admin:
+- Windows 10/11 **ou** Linux (o script wrapper roda em ambos)
+- ~5 GB livres em disco (~3 GB MinerU + ~3 GB torch CUDA opcional)
+- GPU NVIDIA com 8 GB+ VRAM **opcional** (acelera o backend `pipeline` ~60×)
+- **Windows Developer Mode habilitado** — obrigatório apenas se for usar `-b vlm-auto-engine` ou qualquer backend VLM. O `huggingface_hub` baixa modelos via symlinks; sem Developer Mode, falha com `WinError 1314 — o cliente não tem o privilégio necessário`. Habilitar em Settings → Privacy & security → For developers, ou via PowerShell admin:
+
   ```powershell
   New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force
   ```
-  Backend `pipeline` não precisa disso.
+
+  Backend `pipeline` (default) não precisa disso.
 
 ### Instalação
 
-**1. Rust toolchain** (para `pdf-inspector`)
-```bash
-winget install Rustlang.Rustup
-rustup default stable
-```
+**Caminho rápido (recomendado):** instale o [`uv`](https://docs.astral.sh/uv/) e rode `python mineru-md.py <pdf>` — o script faz o bootstrap completo do venv + MinerU + torch CUDA na primeira execução.
 
-**2. uv** (gerenciador Python isolado, para MinerU)
 ```bash
+# Windows
 winget install astral-sh.uv
+
+# Linux/macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**3. Clone `pdf-inspector` e compile**
-```bash
-cd fire_pdf
-git clone https://github.com/firecrawl/pdf-inspector.git
-cd pdf-inspector
-cargo build --release
-cd ..
-```
+**Caminho manual:**
 
-**4. Venv Python 3.12 + MinerU**
 ```bash
+# Venv Python 3.12 + MinerU
 uv venv --python 3.12 .venv-mineru
 uv pip install -p .venv-mineru "mineru[core]"
-```
 
-**5. (Opcional) Torch com CUDA** (só se tiver GPU NVIDIA)
-```bash
+# (Opcional) Torch com CUDA — só se tiver GPU NVIDIA
 uv pip install -p .venv-mineru --reinstall --index-url https://download.pytorch.org/whl/cu128 torch torchvision
-```
-Verificar:
-```bash
+
+# Verificar
 ./.venv-mineru/Scripts/python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
@@ -102,20 +51,56 @@ Verificar:
 
 ## Uso
 
-### pdf-inspector (rápido, sem ML)
+### Atalho: `./mineru-md.py` (recomendado)
+
+Script Python cross-platform (Windows + Linux) que automatiza todo o fluxo: bootstrap do venv na primeira execução, contorno de `MAX_PATH` no Windows (copia o PDF para a raiz com nome curto), chamada do `mineru` com defaults sensatos e relatório do resultado. Só usa stdlib — roda com `python mineru-md.py …` ou `uv run mineru-md.py …`.
+
+**Primeira execução em máquina nova:** o script detecta que `.venv-mineru/` ainda não existe e dispara o bootstrap automaticamente. Pré-requisito único é o [`uv`](https://docs.astral.sh/uv/) instalado.
+
+O bootstrap então faz: `uv venv --python 3.12 .venv-mineru` → `uv pip install mineru[core]` → se `nvidia-smi` for encontrado, instala também `torch` com CUDA (pula com `--no-cuda`).
+
+**Uso:**
 
 ```bash
-# Classificação + layout (~20 ms)
-./pdf-inspector/target/release/detect-pdf.exe arquivo.pdf --analyze --json
+# Caso mais simples
+python mineru-md.py "G:\caminho\longo\com espaços\Livro.pdf"
 
-# PDF → Markdown (~30-150 ms/página)
-./pdf-inspector/target/release/pdf2md.exe arquivo.pdf --raw > saida.md
+# PDF em inglês (OCR mais preciso pra páginas escaneadas em EN)
+python mineru-md.py arquivo.pdf --lang en
 
-# JSON estruturado
-./pdf-inspector/target/release/pdf2md.exe arquivo.pdf --json
+# Slug custom da saída (vira mineru_out/livro-frontend/...)
+python mineru-md.py arquivo.pdf --name livro-frontend
+
+# Qualidade máxima via VLM (~40× mais lento, precisa VRAM)
+python mineru-md.py arquivo.pdf --backend vlm-auto-engine
+
+# Manter a cópia local do PDF (default: remove após rodar)
+python mineru-md.py arquivo.pdf --keep-pdf-copy
+
+# Bootstrap já feito → pular verificação (falha cedo se faltar venv)
+python mineru-md.py arquivo.pdf --skip-bootstrap
 ```
 
-### MinerU (ML, qualidade alta)
+**Parâmetros:**
+
+| Flag | Default | Descrição |
+|---|---|---|
+| `pdf` (posicional) | obrigatório | Caminho do PDF (relativo ou absoluto). |
+| `--name` | derivado | Slug para pasta/arquivo de saída. Auto: lowercase + hífens, máx 50 chars. |
+| `--lang` | `latin` | Código `-l` do MinerU. Afeta OCR (`latin` cobre PT-BR/EN/ES/FR/IT). |
+| `--backend` | `pipeline` | `pipeline`, `vlm-auto-engine`, `hybrid-auto-engine`, etc. |
+| `--out` | `mineru_out` | Pasta raiz da saída (relativa à raiz do projeto). |
+| `--keep-pdf-copy` | off | Não remove a cópia local do PDF ao final. |
+| `--no-cuda` | off | No bootstrap, não tenta instalar `torch+CUDA` mesmo se houver GPU. |
+| `--skip-bootstrap` | off | Assume venv pronto; falha rápido se faltar. |
+
+O script falha cedo com mensagem clara se: o PDF não existir, for stub de 0 bytes do Google Drive, `uv` não estiver no PATH no momento do bootstrap, ou se o binário do `mineru` não estiver no caminho esperado.
+
+Ao final, imprime caminho absoluto do `.md`, tamanho, contagem de imagens (referenciadas + extraídas), e a posição da primeira ocorrência de `U+FFFD` — útil pra detectar problemas de encoding em PDFs PT-BR antes de enviar pro pipeline RAG.
+
+### MinerU CLI direto
+
+Útil pra debugging e flags avançadas que o wrapper não expõe.
 
 ```bash
 ./.venv-mineru/Scripts/mineru.exe \
@@ -126,11 +111,13 @@ Verificar:
 ```
 
 Backends:
+
 - `pipeline` — layout-model + PaddleOCR (rápido, roda em CPU ou GPU)
 - `vlm-auto-engine` — VLM local (qualidade máxima, precisa GPU com muita VRAM)
 - `hybrid-auto-engine` — combina ambos
 
 Flags úteis:
+
 - `-l en` / `-l latin` — idioma (default `ch`). Para PT-BR use `latin`. Ver seção [Processando PDFs em português](#processando-pdfs-em-português-pt-br).
 - `-s N -e M` — intervalo de páginas
 - `-f true` — parsing de fórmulas → LaTeX
@@ -144,17 +131,18 @@ Códigos aceitos pelo backend `pipeline` (fonte: [doc oficial](https://opendatal
 `ch, ch_server, ch_lite, en, korean, japan, chinese_cht, ta, te, ka, th, el, latin, arabic, east_slavic, cyrillic, devanagari`
 
 ```bash
-# PDF text-based digital (caso comum)
-./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin
+# PDF text-based digital (caso comum) — via wrapper, latin é o default
+python mineru-md.py arquivo.pdf
 
 # Forçar OCR (texto digital ruim, fontes embedded estranhas)
 ./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin -m ocr
 
 # Qualidade máxima via VLM multilíngue (precisa VRAM)
-./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b vlm-auto-engine
+python mineru-md.py arquivo.pdf --backend vlm-auto-engine
 ```
 
 Notas (verificadas empiricamente em PDF PT-BR de 156 páginas, `text_based`):
+
 - `-l` **só importa quando há OCR**. PDFs `text_based` extraem texto direto e a flag é praticamente ignorada.
 - **Pipeline `-l latin` produziu acentos PT-BR perfeitos** (13.661 caracteres acentuados, zero U+FFFD): "reprodução", "autorização", "citações", "Enéias", "Comissão Teológica" — todos limpos. Em ~7 s.
 - **VLM `vlm-auto-engine` produziu qualidade equivalente** (13.688 acentos, zero U+FFFD), mas levou **~5 minutos** (~40× mais lento). Estrutura marginalmente melhor (mais headings detectados), volume de texto quase idêntico (209 KB vs 212 KB).
@@ -173,21 +161,19 @@ mineru_out/<pdfname>/auto/
 └── images/*.jpg                  # Figuras extraídas
 ```
 
+`_content_list.json` é o artefato de produção — cada bloco tem tipo (`text`, `table`, `image`, `equation`), página, e bbox. Use ele direto pra chunking inteligente em vez de re-parsear o `.md`.
+
 ---
 
-## Pipeline de ingest RAG (recomendado)
+## Pipeline de ingest RAG
 
 ```
 PDF chega
   │
-  ├─► detect-pdf (Rust, ~20 ms)
-  │     ├─ text_based simples? → pdf2md → done
-  │     └─ mixed/escaneado/complex? ↓
-  │
-  └─► MinerU (GPU, ~1 min/livro)
+  └─► python mineru-md.py <pdf>     (GPU ~1 min/livro)
         └─ consumir _content_list.json
               ├─ text  → chunking por heading + tamanho
-              ├─ table → embedding separado (preservar HTML)
+              ├─ table → embedding separado (preservar HTML com rowspan/colspan)
               ├─ image → vision model / OCR complementar
               └─ equation → LaTeX como-está
 ```
@@ -196,25 +182,24 @@ PDF chega
 
 ## Relevância JRC
 
-- **DSR / Service Reports escaneados** — pipeline híbrido identifica e roteia só o que precisa
-- **Manuais VDR/ECDIS/AIS** — extração ML preserva tabelas de especificação e diagramas
-- **Base RAG do agente técnico** — `_content_list.json` do MinerU fornece chunks prontos com metadados de página e tipo
+- **DSR / Service Reports escaneados** — backend `pipeline -l latin -m ocr` extrai texto via PaddleOCR; `vlm-auto-engine` quando a qualidade do scan for ruim.
+- **Manuais VDR/ECDIS/AIS** — extração ML preserva tabelas de especificação, diagramas e código embarcado em fences.
+- **Base RAG do agente técnico** — `_content_list.json` do MinerU fornece chunks prontos com metadados de página e tipo, sem heurística adicional.
 
 ---
 
 ## Estrutura do repo
 
 ```
-fire_pdf/
-├── README.md                    # este arquivo
+pdf-extract-benchmark/
+├── README.md                    # este arquivo (setup + uso atual)
+├── BENCHMARK.md                 # comparação histórica pdf-inspector vs MinerU
 ├── CLAUDE.md                    # contexto p/ Claude Code (comandos, PT-BR, ambiente)
+├── mineru-md.py                 # wrapper cross-platform (Win+Linux)
 ├── .gitignore
 └── (NÃO COMITADOS — gerados localmente)
-    ├── pdf-inspector/           # clone do repo upstream
-    ├── .venv-mineru/            # venv Python
-    ├── mineru_out/              # saída MinerU (contém conteúdo do PDF — copyright)
-    ├── out_agile.md             # saída pdf-inspector
-    ├── out_agile_mineru.md      # saída MinerU
+    ├── .venv-mineru/            # venv Python (~3 GB)
+    ├── mineru_out/              # saída MinerU (conteúdo extraído — copyright)
     └── *.pdf                    # PDFs de teste (copyright)
 ```
 
@@ -224,11 +209,12 @@ PDFs e saídas extraídas **não são versionados** porque contêm material prot
 
 ## Links
 
-- pdf-inspector: https://github.com/firecrawl/pdf-inspector
-- MinerU: https://github.com/opendatalab/MinerU
-- Fire-PDF (blog de lançamento): https://firecrawl.dev/blog/fire-pdf-launch
+- MinerU: <https://github.com/opendatalab/MinerU>
+- Doc MinerU: <https://opendatalab.github.io/MinerU/>
+- CLI completo: <https://opendatalab.github.io/MinerU/usage/cli_tools/>
+- Parâmetros avançados: <https://opendatalab.github.io/MinerU/usage/advanced_cli_parameters/>
 
 ## Licença
 
 Este repositório (setup + documentação): MIT.
-As ferramentas têm licenças próprias (pdf-inspector MIT, MinerU Apache-2.0).
+MinerU tem licença própria (Apache-2.0).

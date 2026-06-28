@@ -13,6 +13,7 @@ Setup e uso do **[MinerU](https://github.com/opendatalab/MinerU)** para extraç�
 - Windows 10/11 **ou** Linux (o script wrapper roda em ambos)
 - ~5 GB livres em disco (~3 GB MinerU + ~3 GB torch CUDA opcional)
 - GPU NVIDIA com 8 GB+ VRAM **opcional** (acelera o backend `pipeline` ~60×)
+- **`hf_xet`** — pacote que acelera o download dos modelos do Hugging Face (protocolo Xet: paralelo, em chunks, deduplicado). Sem ele, `huggingface_hub` cai no HTTP single-stream (~500 kB/s) e a **primeira execução** leva ~40 min só baixando ~1 GB de modelos (o log avisa `Xet Storage is enabled ... 'hf_xet' package is not installed. Falling back to regular HTTP download`). Os modelos ficam em cache após o primeiro download, então a lentidão é única por máquina. Já incluído no comando de instalação abaixo.
 - **Windows Developer Mode habilitado** — obrigatório apenas se for usar `-b vlm-auto-engine` ou qualquer backend VLM. O `huggingface_hub` baixa modelos via symlinks; sem Developer Mode, falha com `WinError 1314 — o cliente não tem o privilégio necessário`. Habilitar em Settings → Privacy & security → For developers, ou via PowerShell admin:
 
   ```powershell
@@ -23,7 +24,7 @@ Setup e uso do **[MinerU](https://github.com/opendatalab/MinerU)** para extraç�
 
 ### Instalação
 
-**Caminho rápido (recomendado):** instale o [`uv`](https://docs.astral.sh/uv/) e rode `python mineru-md.py <pdf>` — o script faz o bootstrap completo do venv + MinerU + torch CUDA na primeira execução.
+**1. Instale o [`uv`](https://docs.astral.sh/uv/):**
 
 ```bash
 # Windows
@@ -33,12 +34,12 @@ winget install astral-sh.uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Caminho manual:**
+**2. Prepare o venv (passo único):** o `mineru-md.py` é um wrapper thin — ele **não** instala nada, só assume o venv pronto. Rode:
 
 ```bash
-# Venv Python 3.12 + MinerU
+# Venv Python 3.12 + MinerU + hf_xet
 uv venv --python 3.12 .venv-mineru
-uv pip install -p .venv-mineru "mineru[core]"
+uv pip install -p .venv-mineru "mineru[core]" hf_xet
 
 # (Opcional) Torch com CUDA — só se tiver GPU NVIDIA
 uv pip install -p .venv-mineru --reinstall --index-url https://download.pytorch.org/whl/cu128 torch torchvision
@@ -53,11 +54,7 @@ uv pip install -p .venv-mineru --reinstall --index-url https://download.pytorch.
 
 ### Atalho: `./mineru-md.py` (recomendado)
 
-Script Python cross-platform (Windows + Linux) que automatiza todo o fluxo: bootstrap do venv na primeira execução, contorno de `MAX_PATH` no Windows (copia o PDF para a raiz com nome curto), chamada do `mineru` com defaults sensatos e relatório do resultado. Só usa stdlib — roda com `python mineru-md.py …` ou `uv run mineru-md.py …`.
-
-**Primeira execução em máquina nova:** o script detecta que `.venv-mineru/` ainda não existe e dispara o bootstrap automaticamente. Pré-requisito único é o [`uv`](https://docs.astral.sh/uv/) instalado.
-
-O bootstrap então faz: `uv venv --python 3.12 .venv-mineru` → `uv pip install mineru[core]` → se `nvidia-smi` for encontrado, instala também `torch` com CUDA (pula com `--no-cuda`).
+Wrapper thin cross-platform (Windows + Linux): contorna o `MAX_PATH` no Windows (copia o PDF para a raiz com nome curto), chama o `mineru` com defaults sensatos e reporta o resultado. Só usa stdlib — roda com `python mineru-md.py …` ou `uv run mineru-md.py …`. **Pré-requisito:** o venv já preparado (ver [Instalação](#instalação)); o script falha cedo com instrução de preparo se faltar.
 
 **Uso:**
 
@@ -76,9 +73,6 @@ python mineru-md.py arquivo.pdf --backend vlm-auto-engine
 
 # Manter a cópia local do PDF (default: remove após rodar)
 python mineru-md.py arquivo.pdf --keep-pdf-copy
-
-# Bootstrap já feito → pular verificação (falha cedo se faltar venv)
-python mineru-md.py arquivo.pdf --skip-bootstrap
 ```
 
 **Parâmetros:**
@@ -91,10 +85,10 @@ python mineru-md.py arquivo.pdf --skip-bootstrap
 | `--backend` | `pipeline` | `pipeline`, `vlm-auto-engine`, `hybrid-auto-engine`, etc. |
 | `--out` | `mineru_out` | Pasta raiz da saída (relativa à raiz do projeto). |
 | `--keep-pdf-copy` | off | Não remove a cópia local do PDF ao final. |
-| `--no-cuda` | off | No bootstrap, não tenta instalar `torch+CUDA` mesmo se houver GPU. |
-| `--skip-bootstrap` | off | Assume venv pronto; falha rápido se faltar. |
 
-O script falha cedo com mensagem clara se: o PDF não existir, for stub de 0 bytes do Google Drive, `uv` não estiver no PATH no momento do bootstrap, ou se o binário do `mineru` não estiver no caminho esperado.
+> As flags `--no-cuda` e `--skip-bootstrap` ainda são aceitas mas **ignoradas** — restos da versão com bootstrap automático, mantidas só por compatibilidade de interface.
+
+O script falha cedo com mensagem clara se: o PDF não existir, for stub de 0 bytes do Google Drive, ou se o binário do `mineru` não estiver no caminho esperado (venv não preparado).
 
 Ao final, imprime caminho absoluto do `.md`, tamanho, contagem de imagens (referenciadas + extraídas), e a posição da primeira ocorrência de `U+FFFD` — útil pra detectar problemas de encoding em PDFs PT-BR antes de enviar pro pipeline RAG.
 

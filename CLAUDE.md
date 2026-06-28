@@ -13,6 +13,7 @@ O repo nasceu como benchmark comparando MinerU vs `pdf-inspector` (Firecrawl/Rus
 - Windows 10 Pro 19045, PowerShell (preferir; Bash via tool também funciona)
 - GPU NVIDIA RTX 3060 Ti 8 GB (acelera MinerU ~60×)
 - Python 3.12 isolado em `.venv-mineru/` (uv)
+- **`hf_xet` instalado no venv** — sem ele o download inicial dos modelos HF cai no HTTP single-stream lento (~500 kB/s, ~40 min para ~1 GB; log avisa `'hf_xet' package is not installed. Falling back to regular HTTP download`). Com ele usa o protocolo Xet (paralelo, em chunks). Instalar com `uv pip install -p .venv-mineru hf_xet`. Modelos ficam em cache após o 1º download.
 - **Windows Developer Mode = ON** (pré-requisito p/ qualquer backend VLM). Sem isso, `huggingface_hub` quebra ao baixar modelos com `WinError 1314` porque tenta criar symlinks. Foi habilitado neste setup via:
   ```powershell
   # PowerShell admin, executado uma vez

@@ -94,7 +94,7 @@ def main() -> int:
         die(
             f"MinerU nao encontrado em {bin_path}\n\n"
             "Prepare o venv manualmente com:\n"
-            f"    uv pip install -p {VENV} \"mineru[core]\"\n"
+            f"    uv pip install -p {VENV} \"mineru[core]\" hf_xet\n"
             "Ou execute o setup do README."
         )
 

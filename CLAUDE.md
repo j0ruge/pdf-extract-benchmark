@@ -38,13 +38,14 @@ python mineru-md.py arquivo.pdf --lang latin --backend pipeline
 
 A flag `-l/--lang` do MinerU mapeia para os pacotes de OCR do PaddleOCR. **Não existe código `pt` ou `pt_br`.** Para português brasileiro use **`-l latin`** (cobre todos os alfabetos latinos: PT/ES/FR/IT/etc.).
 
-Códigos aceitos pelo backend `pipeline`:
-`ch, ch_server, ch_lite, en, korean, japan, chinese_cht, ta, te, ka, th, el, latin, arabic, east_slavic, cyrillic, devanagari`
+Códigos canônicos no MinerU 3.4.x (`--help`):
+`ch, ch_server, korean, ta, te, ka, th, el, arabic, east_slavic, cyrillic, devanagari`.
+`latin`, `en`, `japan`, `chinese_cht` **ainda funcionam como aliases → `ch`** (o `--help` não os mostra mais, mas o CLI normaliza via `validate_public_ocr_lang`; o modelo `ch` cobre Latin). `ch_lite` foi **removido** no 3.4.x — não usar.
 
 Notas importantes (verificadas empiricamente em PDF PT-BR de 156 páginas, `text_based`):
 - `-l` **só afeta OCR**. PDFs `text_based` extraem texto direto e a flag é praticamente ignorada.
 - **`pipeline -l latin` produziu acentos PT-BR perfeitos**: 13.661 chars acentuados, **zero `U+FFFD`**. "reprodução", "autorização", "Enéias", "Comissão Teológica" — todos limpos. ~7 s no GPU.
-- **`vlm-auto-engine` produziu qualidade equivalente** (13.688 acentos, zero quebrados), mas em **~5 min** (~40× mais lento). Volume e cobertura de texto quase idênticos (209 KB pipeline vs 212 KB VLM).
+- **`vlm-engine` produziu qualidade equivalente** (13.688 acentos, zero quebrados), mas em **~5 min** (~40× mais lento). Volume e cobertura de texto quase idênticos (209 KB pipeline vs 212 KB VLM).
 - **Recomendação para PT-BR digital: pipeline `-l latin`.** VLM só vale a pena para PDFs escaneados/imagem onde o pacote `latin` do PaddleOCR poderia falhar — não testado neste setup.
 - ⚠️ **Cuidado ao diagnosticar acentos via console**: o Git Bash no Windows renderiza UTF-8 PT-BR como `�` em alguns prints, mesmo quando os bytes do arquivo estão corretos. Sempre verifique com `grep -c $'\xef\xbf\xbd'` ou Python (`txt.count(chr(0xFFFD))`) antes de acusar a ferramenta. Aprendi errado uma vez nesta sessão.
 - Para usar VLM, **Windows Developer Mode é obrigatório** (ver "Ambiente"). Sem isso, download do modelo `MinerU2.5-Pro-2604-1.2B` quebra com `WinError 1314`.
@@ -57,25 +58,40 @@ Notas importantes (verificadas empiricamente em PDF PT-BR de 156 páginas, `text
 ./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin -m ocr
 
 # Qualidade máxima via VLM (precisa VRAM)
-./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b vlm-auto-engine
+./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b vlm-engine
 ```
 
-## Backends do MinerU (default mudou)
+## Backends do MinerU (nomes mudaram no 3.4.x)
 
-- `pipeline` — layout-model + PaddleOCR. Rápido em GPU, bom default.
-- `hybrid-auto-engine` — **default atual**. Combina pipeline + VLM.
+⚠️ Os nomes `*-auto-engine` foram **renomeados** no MinerU 3.4.x. Use os novos:
+- `pipeline` — layout-model + PaddleOCR. Rápido em GPU, bom default (e default do wrapper).
+- `hybrid-engine` — **default do CLI**. Combina pipeline + VLM. Flag `--effort medium|high`
+  (`high` liga análise de imagem/gráfico, mais lento; `medium` desliga).
+- `vlm-engine` — VLM local, qualidade máxima, alto consumo de VRAM.
 - `hybrid-http-client`, `vlm-http-client` — chamam serviço remoto.
-- `vlm-auto-engine` — VLM local, qualidade máxima, alto consumo de VRAM.
+
+## Arquivos office (PPTX / DOCX / XLSX) — suporte nativo no 3.4.x
+
+O MinerU 3.4.x parseia office **nativamente** (`mineru.backend.office.*`, sem LibreOffice) —
+basta `mineru -p slides.pptx -o mineru_out` ou `python mineru-md.py slides.pptx`. O `-b` é
+**ignorado** para office (não passa pelos backends de PDF). A saída cai em
+`mineru_out/<nome>/**office**/` (não `auto/`) com `.md` + `_content_list.json` + `images/`.
+
+Verificado empiricamente (PPTX PT-BR de sermão, slides text-based):
+- Parser office capturou **todo o texto** dos slides com formatação (títulos, negrito, sublinhado)
+  + imagens embutidas extraídas, **zero `U+FFFD`**, em ~20 s. Ótimo para RAG.
+- ⚠️ Slides com texto "queimado" em imagem (bitmap) **não** são OCR-ados pelo parser office —
+  nesse caso, exportar o PPTX para PDF e rodar `pipeline -m ocr` (ou `hybrid --effort high`).
 
 ## Saída do MinerU
 
 ```
-mineru_out/<pdfname>/auto/
+mineru_out/<pdfname>/auto/          # PDF/imagem → auto/ ; office (pptx/docx/xlsx) → office/
 ├── <pdfname>.md                  # Markdown final
 ├── <pdfname>_content_list.json   # USE PARA CHUNKING RAG (blocos tipados)
 ├── <pdfname>_middle.json         # Representação intermediária
-├── <pdfname>_layout.pdf          # Auditoria visual (bounding boxes)
-├── <pdfname>_span.pdf            # Spans de texto
+├── <pdfname>_layout.pdf          # Auditoria visual (bounding boxes) — só PDF/imagem
+├── <pdfname>_span.pdf            # Spans de texto — só PDF/imagem
 └── images/*.jpg                  # Figuras extraídas
 ```
 

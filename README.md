@@ -4,6 +4,8 @@ Setup e uso do **[MinerU](https://github.com/opendatalab/MinerU)** para extraç�
 
 > Este repo nasceu como benchmark entre `pdf-inspector` e MinerU. MinerU venceu e virou o único caminho ativo — comparação completa, números e decisão em [BENCHMARK.md](BENCHMARK.md).
 
+> Testado com **MinerU 3.4.4**. Além de PDF/imagem, aceita **office nativo** (pptx/docx/xlsx) sem LibreOffice.
+
 ---
 
 ## Setup
@@ -14,7 +16,7 @@ Setup e uso do **[MinerU](https://github.com/opendatalab/MinerU)** para extraç�
 - ~5 GB livres em disco (~3 GB MinerU + ~3 GB torch CUDA opcional)
 - GPU NVIDIA com 8 GB+ VRAM **opcional** (acelera o backend `pipeline` ~60×)
 - **`hf_xet`** — pacote que acelera o download dos modelos do Hugging Face (protocolo Xet: paralelo, em chunks, deduplicado). Sem ele, `huggingface_hub` cai no HTTP single-stream (~500 kB/s) e a **primeira execução** leva ~40 min só baixando ~1 GB de modelos (o log avisa `Xet Storage is enabled ... 'hf_xet' package is not installed. Falling back to regular HTTP download`). Os modelos ficam em cache após o primeiro download, então a lentidão é única por máquina. Já incluído no comando de instalação abaixo.
-- **Windows Developer Mode habilitado** — obrigatório apenas se for usar `-b vlm-auto-engine` ou qualquer backend VLM. O `huggingface_hub` baixa modelos via symlinks; sem Developer Mode, falha com `WinError 1314 — o cliente não tem o privilégio necessário`. Habilitar em Settings → Privacy & security → For developers, ou via PowerShell admin:
+- **Windows Developer Mode habilitado** — obrigatório apenas se for usar um backend VLM (`-b vlm-engine`/`hybrid-engine`). O `huggingface_hub` baixa modelos via symlinks; sem Developer Mode, falha com `WinError 1314 — o cliente não tem o privilégio necessário`. Habilitar em Settings → Privacy & security → For developers, ou via PowerShell admin:
 
   ```powershell
   New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force
@@ -68,10 +70,16 @@ python mineru-md.py arquivo.pdf --lang en
 # Slug custom da saída (vira mineru_out/livro-frontend/...)
 python mineru-md.py arquivo.pdf --name livro-frontend
 
-# Qualidade máxima via VLM (~40× mais lento, precisa VRAM)
-python mineru-md.py arquivo.pdf --backend vlm-auto-engine
+# Slides / office (pptx, docx, xlsx) — parser nativo do MinerU 3.4.x
+python mineru-md.py "apresentacao.pptx"
 
-# Manter a cópia local do PDF (default: remove após rodar)
+# Escaneado / muitos gráficos — hybrid com análise de imagem
+python mineru-md.py arquivo.pdf --backend hybrid-engine --effort high
+
+# Qualidade máxima via VLM local (~40× mais lento, precisa VRAM)
+python mineru-md.py arquivo.pdf --backend vlm-engine
+
+# Manter a cópia local (default: remove após rodar)
 python mineru-md.py arquivo.pdf --keep-pdf-copy
 ```
 
@@ -79,12 +87,13 @@ python mineru-md.py arquivo.pdf --keep-pdf-copy
 
 | Flag | Default | Descrição |
 |---|---|---|
-| `pdf` (posicional) | obrigatório | Caminho do PDF (relativo ou absoluto). |
+| `arquivo` (posicional) | obrigatório | Caminho do documento: pdf, png/jpg, ou office (pptx/docx/xlsx). |
 | `--name` | derivado | Slug para pasta/arquivo de saída. Auto: lowercase + hífens, máx 50 chars. |
-| `--lang` | `latin` | Código `-l` do MinerU. Afeta OCR (`latin` cobre PT-BR/EN/ES/FR/IT). |
-| `--backend` | `pipeline` | `pipeline`, `vlm-auto-engine`, `hybrid-auto-engine`, etc. |
+| `--lang` | `latin` | Código `-l` do MinerU. Afeta **só OCR** (`latin`→`ch`, cobre PT-BR/EN/ES/FR/IT). |
+| `--backend` | `pipeline` | `pipeline`, `vlm-engine`, `hybrid-engine`, `vlm-http-client`, `hybrid-http-client`. Ignorado p/ office. |
+| `--effort` | — | `medium`/`high` para backends `hybrid-*` (`high` analisa imagem/gráfico). |
 | `--out` | `mineru_out` | Pasta raiz da saída (relativa à raiz do projeto). |
-| `--keep-pdf-copy` | off | Não remove a cópia local do PDF ao final. |
+| `--keep-pdf-copy` | off | Não remove a cópia local ao final. |
 
 > As flags `--no-cuda` e `--skip-bootstrap` ainda são aceitas mas **ignoradas** — restos da versão com bootstrap automático, mantidas só por compatibilidade de interface.
 
@@ -104,15 +113,19 @@ Ao final, imprime caminho absoluto do `.md`, tamanho, contagem de imagens (refer
   -l en
 ```
 
-Backends:
+Backends (MinerU 3.4.x):
 
 - `pipeline` — layout-model + PaddleOCR (rápido, roda em CPU ou GPU)
-- `vlm-auto-engine` — VLM local (qualidade máxima, precisa GPU com muita VRAM)
-- `hybrid-auto-engine` — combina ambos
+- `vlm-engine` — VLM local (qualidade máxima, precisa GPU com muita VRAM)
+- `hybrid-engine` — pipeline + VLM (default do CLI; `--effort high` liga análise de imagem/gráfico)
+- `vlm-http-client` / `hybrid-http-client` — chamam serviço remoto
+
+> Arquivos office (pptx/docx/xlsx) usam o parser nativo do MinerU e **ignoram** `-b`; a saída cai em `office/`.
 
 Flags úteis:
 
-- `-l en` / `-l latin` — idioma (default `ch`). Para PT-BR use `latin`. Ver seção [Processando PDFs em português](#processando-pdfs-em-português-pt-br).
+- `-l latin` — idioma (default `ch`). Para PT-BR use `latin` (alias → `ch`). Ver seção [Processando PDFs em português](#processando-pdfs-em-português-pt-br).
+- `--effort medium|high` — só para backends `hybrid-*` (`high` analisa imagem/gráfico, mais lento)
 - `-s N -e M` — intervalo de páginas
 - `-f true` — parsing de fórmulas → LaTeX
 - `-t true` — parsing de tabelas (default on)
@@ -121,8 +134,7 @@ Flags úteis:
 
 A flag `-l/--lang` mapeia para os pacotes de OCR do PaddleOCR. **Não existe código `pt`/`pt_br`** — para português brasileiro use **`-l latin`** (cobre alfabetos latinos: PT/ES/FR/IT/etc.).
 
-Códigos aceitos pelo backend `pipeline` (fonte: [doc oficial](https://opendatalab.github.io/MinerU/usage/cli_tools/)):
-`ch, ch_server, ch_lite, en, korean, japan, chinese_cht, ta, te, ka, th, el, latin, arabic, east_slavic, cyrillic, devanagari`
+Canônicos no MinerU 3.4.x (`--help`): `ch, ch_server, korean, ta, te, ka, th, el, arabic, east_slavic, cyrillic, devanagari`. Os códigos `latin`, `en`, `japan`, `chinese_cht` continuam aceitos como **aliases → `ch`** (o modelo `ch` cobre Chinese/English/Japanese/Latin), então para PT-BR `latin` e `ch` dão o mesmo resultado. `ch_lite` foi removido no 3.4.x.
 
 ```bash
 # PDF text-based digital (caso comum) — via wrapper, latin é o default
@@ -132,14 +144,14 @@ python mineru-md.py arquivo.pdf
 ./.venv-mineru/Scripts/mineru.exe -p arquivo.pdf -o mineru_out -b pipeline -l latin -m ocr
 
 # Qualidade máxima via VLM multilíngue (precisa VRAM)
-python mineru-md.py arquivo.pdf --backend vlm-auto-engine
+python mineru-md.py arquivo.pdf --backend vlm-engine
 ```
 
 Notas (verificadas empiricamente em PDF PT-BR de 156 páginas, `text_based`):
 
 - `-l` **só importa quando há OCR**. PDFs `text_based` extraem texto direto e a flag é praticamente ignorada.
 - **Pipeline `-l latin` produziu acentos PT-BR perfeitos** (13.661 caracteres acentuados, zero U+FFFD): "reprodução", "autorização", "citações", "Enéias", "Comissão Teológica" — todos limpos. Em ~7 s.
-- **VLM `vlm-auto-engine` produziu qualidade equivalente** (13.688 acentos, zero U+FFFD), mas levou **~5 minutos** (~40× mais lento). Estrutura marginalmente melhor (mais headings detectados), volume de texto quase idêntico (209 KB vs 212 KB).
+- **VLM `vlm-engine` produziu qualidade equivalente** (13.688 acentos, zero U+FFFD), mas levou **~5 minutos** (~40× mais lento). Estrutura marginalmente melhor (mais headings detectados), volume de texto quase idêntico (209 KB vs 212 KB).
 - **Conclusão para PT-BR digital: use `pipeline -l latin`** — VLM não compensa o custo. VLM só faz diferença real em PDFs escaneados/imagem onde o pacote `latin` do PaddleOCR poderia falhar.
 - VLM no Windows precisa de **Developer Mode habilitado** (ver [Pré-requisitos](#pré-requisitos)) — sem isso, o download do modelo HF quebra com `WinError 1314`.
 
@@ -156,6 +168,8 @@ mineru_out/<pdfname>/auto/
 ```
 
 `_content_list.json` é o artefato de produção — cada bloco tem tipo (`text`, `table`, `image`, `equation`), página, e bbox. Use ele direto pra chunking inteligente em vez de re-parsear o `.md`.
+
+> **Office (pptx/docx/xlsx):** a saída fica em `mineru_out/<nome>/office/` (não `auto/`), com os mesmos `.md` + `_content_list.json` + `images/`. O wrapper detecta a subpasta automaticamente.
 
 ---
 
@@ -176,7 +190,7 @@ PDF chega
 
 ## Relevância JRC
 
-- **DSR / Service Reports escaneados** — backend `pipeline -l latin -m ocr` extrai texto via PaddleOCR; `vlm-auto-engine` quando a qualidade do scan for ruim.
+- **DSR / Service Reports escaneados** — backend `pipeline -l latin -m ocr` extrai texto via PaddleOCR; `hybrid-engine --effort high` ou `vlm-engine` quando a qualidade do scan for ruim.
 - **Manuais VDR/ECDIS/AIS** — extração ML preserva tabelas de especificação, diagramas e código embarcado em fences.
 - **Base RAG do agente técnico** — `_content_list.json` do MinerU fornece chunks prontos com metadados de página e tipo, sem heurística adicional.
 
